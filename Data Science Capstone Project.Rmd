@@ -1,0 +1,214 @@
+---
+title: "Data Science Capstone Project"
+author: "Marc C."
+date: "November 22, 2015"
+output: html_document
+---
+
+##Introduction/Background
+Yelp is one of the premier interfaces for restuarant reviews and guides. Often, for me I have used yelp primarily to locate a restaurant either in a new cuisine or at a new location. One of the biggest problems I have faced with Yelp is understanding the level of credence to a rated resturant with limited reviews. For this project, I will be exploring the projected ratings for restaurants given an early rating age. Specifically, I will be trying to find out that at a early timeframe of a restaurant, how accurate is its current rating be reflective of its overall rating.
+
+
+##Data Sources
+
+The dataset was provided by Yelp, a website/interface where users can rate businesses with a descriptive review and a 1-5 star review. The dataset was provided on an academic license agreement. The dataset is provided by Yelp as part of a dataset challenge and consists of 1.6M reviews and 500K tips by 366K users for 61K businesses. I will be tackling restaurant businesses from this dataset.
+
+##Objective
+
+The objective for this study is to figure out how reliable is a rating of a restaurant based on limited reviews. Specifically, if you only have a cetain amount of reviews for a restaurant, can it be a accurate indicator of its overall quality/rating?
+
+
+##Methodology
+
+The way I approached this problem is to subset the data to just restaurants with at least a certain amount of reviews. For this case study, I subsetted these restaurants who have more than 125 reviews. I will then calculate a rolling average (rounded to nearest .5) throughout its time period based on user reviews from inception. From there I set certain checkpoints in the maturation of a restaurants review. I arbitrarily set a early review indicator at 15 reviews. Then compare the average rating of those restaurants then and where the overall rating stands after 100 reviews. Most of the results will be done with a students t-test assesing the mean and 95% confidence intervals. I will do a 60% 40% split on the training data and testing data. The mean and confidence intervals will be assessed in the training data and then tested in the testing data.
+
+###Loading the Data
+
+The first step is to load the dat and the appropriate packages for this exercise. For reproducilbility, I set the seed = 12.
+
+```{r}
+library(devtools)
+library(data.table)
+library(zoo)
+```
+
+
+```{r echo = FALSE}
+setwd("/Users/mchan/desktop/coursera/capstone")
+
+load(paste0(getwd(),'/Capstone_Quiz.RData'))
+data<- dat[['business']]
+datareview <- dat[['review']]
+
+## Convert list into DF ##
+source_gist(4676064)
+
+df_review <- as.data.frame(datareview)
+
+df_rest <- as.data.frame(data)
+Subset_rest <- df_rest[grep("Restaurants", df_rest$categories), ]
+
+## Subset and merge with reviews ## 
+rest_review <- merge(x = Subset_rest, y = df_review, by = "business_id")
+rest_review$start_date <-as.Date(rest_review$date)
+d = aggregate(rest_review$start_date,by=list(rest_review$business_id),min)
+rest_review2 = merge(rest_review,d,by.x=1,by.y=1)
+
+rest_review2$survey_age = as.Date(rest_review$start_date, format="%Y/%m/%d")-rest_review2$x
+
+## Sort the result by business and date reviewed ##
+rest_review2_sorted <- rest_review2[with(rest_review2,order(business_id,start_date)), ]
+rest_review2_sorted$start_date <- as.character(rest_review2_sorted$start_date)
+rest_review2_sorted$x <- as.character(rest_review2_sorted$x)
+
+## Turn to DT to index reviews ##
+##require("data.table")
+dt <- data.table(rest_review2_sorted)
+
+rest_review3 <- dt[ , Index := 1:.N , by = c("business_id") ]
+rest_review4 <- as.data.frame.matrix(rest_review3) 
+
+## Turn to DT to compute rolling avg ##
+
+dt2<-data.table(rest_review4)
+
+dt2[, RollingAvg := c(NA, head(cumsum(stars.y)/(seq_len(.N)), -1)), by = business_id]
+
+## Turn back to DF and clean up rolling avg ##
+rest_review5 <- as.data.frame.matrix(dt2) 
+
+rest_review5$RollingAvg2 <- ifelse(rest_review5$Index == 1, rest_review5$stars.y, rest_review5$RollingAvg)
+
+##Subet to the sampling##
+rest_review6 <-rest_review5[which(rest_review5$review_count > 125),]
+length(unique(rest_review6$business_id))
+
+##Subset the incremental reviews###
+rest_review15 <-rest_review6[which(rest_review6$Index == 15),]
+rest_review15$Rating15 <-rest_review15$RollingAvg2
+
+rest_review25 <-rest_review6[which(rest_review6$Index == 25),]
+rest_review25$Rating25 <-rest_review25$RollingAvg2
+
+rest_review50 <-rest_review6[which(rest_review6$Index == 50),]
+rest_review50$Rating50 <-rest_review50$RollingAvg2
+
+
+rest_review75 <-rest_review6[which(rest_review6$Index == 75),]
+rest_review75$Rating75 <-rest_review75$RollingAvg2
+
+rest_review100 <-rest_review6[which(rest_review6$Index == 100),]
+rest_review100$Rating100 <-rest_review100$RollingAvg2
+
+##merge back the incremental reviews###
+rest_review7 = merge(rest_review6,rest_review15[,c("business_id","Rating15")],by.x=1,by.y=1)
+rest_review8 = merge(rest_review7,rest_review25[,c("business_id","Rating25")],by.x=1,by.y=1)
+rest_review9 = merge(rest_review8,rest_review50[,c("business_id","Rating50")],by.x=1,by.y=1)
+rest_review10 = merge(rest_review9,rest_review75[,c("business_id","Rating75")],by.x=1,by.y=1)
+rest_review11 = merge(rest_review10,rest_review100[,c("business_id","Rating100")],by.x=1,by.y=1)
+
+##Round rating to nearest.5###
+rest_review11$Rating15 <- round(rest_review11$Rating15/.5)*.5
+rest_review11$Rating25 <- round(rest_review11$Rating25/.5)*.5
+rest_review11$Rating50 <- round(rest_review11$Rating50/.5)*.5
+rest_review11$Rating75 <- round(rest_review11$Rating75/.5)*.5
+rest_review11$Rating100 <- round(rest_review11$Rating100/.5)*.5
+
+###Obtain population of data###
+rest_review_pop_temp <- rest_review11[which(rest_review11$Index == 2),]
+rest_review_pop <- rest_review_pop_temp[!is.na(rest_review_pop_temp$Rating100),]
+
+
+```
+
+
+###Splitting the data set for cross validation
+
+To conduct cross-validation we will subset the training data set: sub_training (60%) and sub_test (40%). Training set has about 1200 data points.
+
+```{r echo = FALSE}
+###Set seed and then choose subset of data##
+set.seed(12)
+rest_review_sample <- rest_review_pop[sample(1:nrow(rest_review_pop), 1300,
+              replace=FALSE),]
+
+rest_review_testing <- rest_review_pop[!rest_review_pop$business_id %in% rest_review_sample$business_id, ]
+
+###Subset training data based on initial ratings###
+rest_review_sample_5.0 <- rest_review_sample[which(rest_review_sample$Rating15 == 5.0),]
+rest_review_sample_4.5 <- rest_review_sample[which(rest_review_sample$Rating15 == 4.5),]
+rest_review_sample_4.0 <- rest_review_sample[which(rest_review_sample$Rating15 == 4.0),]
+rest_review_sample_3.5 <- rest_review_sample[which(rest_review_sample$Rating15 == 3.5),]
+rest_review_sample_3.0 <- rest_review_sample[which(rest_review_sample$Rating15 == 3.0),]
+rest_review_sample_2.5 <- rest_review_sample[which(rest_review_sample$Rating15 == 2.5),]
+rest_review_sample_2.0 <- rest_review_sample[which(rest_review_sample$Rating15 == 2.0),]
+
+###Subset testing data based on initial ratings###
+rest_review_testing_5.0 <- rest_review_testing[which(rest_review_testing$Rating15 == 5.0),]
+rest_review_testing_4.5 <- rest_review_testing[which(rest_review_testing$Rating15 == 4.5),]
+rest_review_testing_4.0 <- rest_review_testing[which(rest_review_testing$Rating15 == 4.0),]
+rest_review_testing_3.5 <- rest_review_testing[which(rest_review_testing$Rating15 == 3.5),]
+rest_review_testing_3.0 <- rest_review_testing[which(rest_review_testing$Rating15 == 3.0),]
+rest_review_testing_2.5 <- rest_review_testing[which(rest_review_testing$Rating15 == 2.5),]
+rest_review_testing_2.0 <- rest_review_testing[which(rest_review_testing$Rating15 == 2.0),]
+
+```
+
+Histogram plot of a few cohorts split between their initial rating at 15 reviews. These are frequency plots of their overall average ratings after 100 reviews.
+
+```{r}
+par(oma=c(6,6,6,6))
+hist(rest_review_sample_5.0$Rating100,breaks=seq(3,5,by=.5), main = "Overall Rating Given 5.0 after 15 Reviews", xlab ="Rating at 100 Reviews")
+hist(rest_review_sample_4.5$Rating100,breaks=seq(3,5,by=.5), main = "Overall Rating Given 4.5 after 15 Reviews", xlab ="Rating at 100 Reviews")
+hist(rest_review_sample_4.0$Rating100,breaks=seq(3,5,by=.5), main = "Overall Rating Given 4.0 after 15 Reviews", xlab ="Rating at 100 Reviews")
+hist(rest_review_sample_3.5$Rating100,breaks=seq(1,5,by=.5), main = "Overall Rating Given 3.5 after 15 Reviews", xlab ="Rating at 100 Reviews")
+
+```
+
+
+###Calculating Means and Confidence Intervals
+
+Below we use the students T-test against its mean rating after 15 reviews.
+
+```{r}
+
+###Calculate training statistics for each cohort####
+
+t.test(rest_review_sample_5.0$Rating100,mu=5,alternative="two.sided")
+t.test(rest_review_sample_4.5$Rating100,mu=4.5,alternative="two.sided")
+t.test(rest_review_sample_4.0$Rating100,mu=4.0,alternative="two.sided") 
+t.test(rest_review_sample_3.5$Rating100,mu=3.5,alternative="two.sided") 
+t.test(rest_review_sample_3.0$Rating100,mu=3.0,alternative="two.sided") 
+t.test(rest_review_sample_2.5$Rating100,mu=2.5,alternative="two.sided") 
+```
+
+Here we can see with 95% confidence that most restaurants with an early rating of 5.0 will end up at 4.5. Those that start at a 4.5 or a 4.0 rating will end up at a 4.0 rating. Now let's see what happens when we apply these predictions to the rest of the dataset (testing set).
+
+
+##Results/Prediction
+
+Here we will take our testing dataset and also calculate their means and confidence intervals given their early ratings. 
+
+```{r}
+
+###Calculate testing statistics for each cohort####
+
+t.test(rest_review_testing_5.0$Rating100,mu=5,alternative="two.sided")
+t.test(rest_review_testing_4.5$Rating100,mu=4.5,alternative="two.sided")
+t.test(rest_review_testing_4.0$Rating100,mu=4.0,alternative="two.sided") 
+t.test(rest_review_testing_3.5$Rating100,mu=3.5,alternative="two.sided") 
+t.test(rest_review_testing_3.0$Rating100,mu=3.0,alternative="two.sided") 
+t.test(rest_review_testing_2.5$Rating100,mu=2.5,alternative="two.sided") 
+```
+
+The result of the testing data set also is consistent with what we saw in the training data set. Most restaurants with an early rating of 5.0 will end up at 4.5. Those that start at a 4.5 or a 4.0 rating will end up at a 4.0 rating. 
+
+##Conclusion/Discussion
+
+We can see that even with limited reviews, we can see that there are certain trends to be deduced. Most restaurants that start with a 5.0 rating tend to mature with a high rating of 4.5. My early guess is that the disparity will be greater since most early reviews tend to be more bias (friends and family giving a supportive review). I personally tend to look for restaurants that are 4.5 or higher in rating. So one with similar tastes can be weary with restaurants that have a more modest early rating (4.0 or 4.5) and more safely assume that a 5.0 early rated restaurant will be a winner. 
+
+As a separate project I would like to gain more understanding of how early rated 5.0 restaurants will end up in their matured rating. There are instances where a early 5.0 rating can end up well short of it. With more data and setting even earlier thresholds for early indications, I think I can find some interesting indicators for predicting where these restaurants will end up.
+
+
+
+
